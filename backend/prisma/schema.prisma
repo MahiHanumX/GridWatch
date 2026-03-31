@@ -1,0 +1,151 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Zone {
+  id        String    @id @default(uuid()) @db.Uuid
+  name      String    @unique @db.VarChar(255)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  users     User[]
+  sensors   Sensor[]
+
+  @@map("zones")
+}
+
+model User {
+  id                               String          @id @default(uuid()) @db.Uuid
+  username                         String          @unique @db.VarChar(100)
+  role                             String          @db.VarChar(50)
+  zoneId                           String?         @map("zone_id") @db.Uuid
+  createdAt                        DateTime        @default(now()) @map("created_at") @db.Timestamptz()
+  
+  zone                             Zone?           @relation(fields: [zoneId], references: [id])
+  suppressions                     Suppression[]
+  auditLogs                        AlertAuditLog[]
+  escalationLogs                   EscalationLog[]
+
+  @@map("users")
+}
+
+model Sensor {
+  id                     String        @id @default(uuid()) @db.Uuid
+  zoneId                 String        @map("zone_id") @db.Uuid
+  name                   String        @db.VarChar(255)
+  ruleAMinVoltage        Decimal?      @map("rule_a_min_voltage") @db.Decimal
+  ruleAMaxVoltage        Decimal?      @map("rule_a_max_voltage") @db.Decimal
+  ruleAMinTemp           Decimal?      @map("rule_a_min_temp") @db.Decimal
+  ruleAMaxTemp           Decimal?      @map("rule_a_max_temp") @db.Decimal
+  ruleBChangeThreshold   Decimal?      @map("rule_b_change_threshold") @db.Decimal
+  state                  String        @default("healthy") @db.VarChar(50)
+  lastReadingAt          DateTime?     @map("last_reading_at") @db.Timestamptz()
+  createdAt              DateTime      @default(now()) @map("created_at") @db.Timestamptz()
+
+  zone                   Zone          @relation(fields: [zoneId], references: [id])
+  readings               Reading[]
+  suppressions           Suppression[]
+  anomalies              Anomaly[]
+  alerts                 Alert[]
+
+  @@map("sensors")
+}
+
+model Reading {
+  id          String   @id @default(uuid()) @db.Uuid
+  sensorId    String   @map("sensor_id") @db.Uuid
+  voltage     Decimal  @db.Decimal
+  current     Decimal  @db.Decimal
+  temperature Decimal  @db.Decimal
+  statusCode  Int      @map("status_code")
+  timestamp   DateTime @db.Timestamptz()
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  sensor      Sensor   @relation(fields: [sensorId], references: [id])
+  anomalies   Anomaly[]
+
+  @@index([sensorId, timestamp(sort: Desc)])
+  @@map("readings")
+}
+
+model Suppression {
+  id        String   @id @default(uuid()) @db.Uuid
+  sensorId  String   @map("sensor_id") @db.Uuid
+  startTime DateTime @map("start_time") @db.Timestamptz()
+  endTime   DateTime @map("end_time") @db.Timestamptz()
+  createdBy String?  @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  sensor    Sensor   @relation(fields: [sensorId], references: [id])
+  user      User?    @relation(fields: [createdBy], references: [id])
+
+  @@index([sensorId, startTime, endTime])
+  @@map("suppressions")
+}
+
+model Anomaly {
+  id           String   @id @default(uuid()) @db.Uuid
+  sensorId     String   @map("sensor_id") @db.Uuid
+  readingId    String?  @map("reading_id") @db.Uuid
+  ruleType     String   @map("rule_type") @db.VarChar(10)
+  description  String   @db.Text
+  isSuppressed Boolean  @default(false) @map("is_suppressed")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  sensor       Sensor   @relation(fields: [sensorId], references: [id])
+  reading      Reading? @relation(fields: [readingId], references: [id])
+  alerts       Alert[]
+
+  @@index([sensorId, createdAt(sort: Desc)])
+  @@map("anomalies")
+}
+
+model Alert {
+  id           String   @id @default(uuid()) @db.Uuid
+  sensorId     String   @map("sensor_id") @db.Uuid
+  anomalyId    String   @map("anomaly_id") @db.Uuid
+  status       String   @default("open") @db.VarChar(50)
+  severity     String   @db.VarChar(50)
+  isEscalated  Boolean  @default(false) @map("is_escalated")
+  isSuppressed Boolean  @default(false) @map("is_suppressed")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamptz()
+
+  sensor      Sensor   @relation(fields: [sensorId], references: [id])
+  anomaly     Anomaly  @relation(fields: [anomalyId], references: [id])
+  auditLogs   AlertAuditLog[]
+  escalations EscalationLog[]
+
+  @@index([status, sensorId])
+  @@map("alerts")
+}
+
+model AlertAuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  alertId    String   @map("alert_id") @db.Uuid
+  fromStatus String?  @map("from_status") @db.VarChar(50)
+  toStatus   String   @map("to_status") @db.VarChar(50)
+  changedBy  String?  @map("changed_by") @db.Uuid
+  changedAt  DateTime @default(now()) @map("changed_at") @db.Timestamptz()
+
+  alert      Alert    @relation(fields: [alertId], references: [id])
+  user       User?    @relation(fields: [changedBy], references: [id])
+
+  @@index([alertId, changedAt(sort: Desc)])
+  @@map("alert_audit_log")
+}
+
+model EscalationLog {
+  id                       String   @id @default(uuid()) @db.Uuid
+  alertId                  String   @map("alert_id") @db.Uuid
+  escalatedToSupervisorId  String   @map("escalated_to_supervisor_id") @db.Uuid
+  escalatedAt              DateTime @default(now()) @map("escalated_at") @db.Timestamptz()
+
+  alert                    Alert    @relation(fields: [alertId], references: [id])
+  supervisor               User     @relation(fields: [escalatedToSupervisorId], references: [id])
+
+  @@map("escalation_logs")
+}
